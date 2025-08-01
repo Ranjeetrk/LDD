@@ -4,6 +4,7 @@
 #include <linux/cdev.h>
 #include <linux/kthread.h>
 #include <linux/delay.h>
+#include <linux/wait.h>
 
 #define WR_VALUE _IOW('w','r',int32_t *)
 #define RD_VALUE _IOR('r','d',int32_t*)
@@ -14,15 +15,39 @@ static struct cdev ioctl_cdev;
 static struct class *dev_class;
 
 static struct task_struct *wait_thread;
-
+DECLARE_WAIT_QUEUE_HEAD(wq);  //static wait queue initialization 
+// wait_queue_head_t wq;
+// init_waitqueue_head(&wq);  // dynamic method 
+static int wait_queue_flag = 0; // 0: no event, 1: read, 2: exit
+static int count = 0;
+static DEFINE_SPINLOCK(flag_lock); // Protect wait_queue_flag
+				   
 static int wait_function(void *){
 
+	int loopcount = 0; 
 	pr_info("wait_function entry \n");
 	while (!kthread_should_stop()) {
-		pr_info("wait_function running...\n");
-		msleep(5000); // Sleep for 5 seconds
+		pr_info("wait_function running...%d\n",++loopcount);
+		wait_event_interruptible(wq, (wait_queue_flag !=0) );
+		spin_lock(&flag_lock);
+		if(wait_queue_flag ==1){
+			pr_info("wakeup event came from ioctl read, count :%d\n", ++count);
+			wait_queue_flag = 0;
+			spin_unlock(&flag_lock);
+		}
+		else if(wait_queue_flag == 2){
+			pr_info("wakeup event came from exit driver\n");
+			wait_queue_flag = 0;
+			spin_unlock(&flag_lock);
+			break;
+		}
+
 	}
 	pr_info("wait_function exiting\n");
+	spin_lock(&flag_lock);
+    	wait_thread = NULL; // Clear reference to prevent kthread_stop accessing freed task_struct
+	spin_unlock(&flag_lock);
+	do_exit(0);
 	return 0;
 }
 
@@ -38,6 +63,12 @@ static long my_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 			pr_info("data written value: %d \n", value);
 			break;
 		case RD_VALUE:
+			pr_info("Read function called, waking up thread\n");
+			spin_lock(&flag_lock);
+			wait_queue_flag = 1;
+			spin_unlock(&flag_lock);
+			wake_up(&wq);
+
 			if(copy_to_user((int __user*)arg, &value, sizeof(value)))
 			{
 				pr_err("data read failed \n");
@@ -115,6 +146,8 @@ r_clean:
 static void __exit ioctl_driver_exit(void)
 {
 	if (wait_thread) {
+		wait_queue_flag = 2;
+		wake_up(&wq);
 		kthread_stop(wait_thread);
 		pr_info("wait_thread stopped\n");
 	}
