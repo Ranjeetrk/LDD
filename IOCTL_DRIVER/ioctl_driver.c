@@ -2,6 +2,8 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/cdev.h>
+#include <linux/kthread.h>
+#include <linux/delay.h>
 
 #define WR_VALUE _IOW('w','r',int32_t *)
 #define RD_VALUE _IOR('r','d',int32_t*)
@@ -10,6 +12,19 @@ int32_t value = 0;
 dev_t dev=0; 
 static struct cdev ioctl_cdev;
 static struct class *dev_class;
+
+static struct task_struct *wait_thread;
+
+static int wait_function(void *){
+
+	pr_info("wait_function entry \n");
+	while (!kthread_should_stop()) {
+		pr_info("wait_function running...\n");
+		msleep(5000); // Sleep for 5 seconds
+	}
+	pr_info("wait_function exiting\n");
+	return 0;
+}
 
 static long my_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 {
@@ -74,6 +89,16 @@ static int __init ioctl_driver_init(void)
 		pr_err("Cannot create the Device 1\n");
 		goto r_device;
 	}
+
+	/* create kernel thread */
+	wait_thread = kthread_create(wait_function, NULL, "waitThread");
+	if(wait_thread){
+		pr_info("wait_function thread created \n");
+		wake_up_process(wait_thread);
+	}
+	else
+		pr_info("wait_function thread creation failed \n");
+
 	pr_info("IOCTL Driver Initialized\n");
 	return 0;
 r_device: 
@@ -89,6 +114,10 @@ r_clean:
 
 static void __exit ioctl_driver_exit(void)
 {
+	if (wait_thread) {
+		kthread_stop(wait_thread);
+		pr_info("wait_thread stopped\n");
+	}
 	device_destroy(dev_class, dev);  // to ensure /dev/ioctl_device is removed
 	class_destroy(dev_class);
 	cdev_del(&ioctl_cdev);
