@@ -2,6 +2,7 @@ obj-m += gpio_interrupt.o
 
 ARCH = arm
 CROSS_COMPILE = arm-linux-gnueabihf-
+#CFLAGS_MODULE="-DUSE_STATIC_WORKQUEUE"
 
 KDIR = "~/workspace/ldd/source/linux_bbb_4.14/"
 HOST_KDIR = "/lib/modules/$(shell uname -r)/build"

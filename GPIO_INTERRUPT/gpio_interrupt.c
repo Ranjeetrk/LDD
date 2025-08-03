@@ -3,14 +3,32 @@
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/gpio.h>
+#include <linux/workqueue.h>
 
 #define GPIO_NUM (399+33)
+static void workqueue_handler(struct work_struct *);
+#ifdef USE_STATIC_WORKQUEUE
+DECLARE_WORK(static_work, workqueue_handler);
+#else
+struct work_struct dynamic_wq; 
+#endif
 
 static int irqNumber;
 
+static void workqueue_handler(struct work_struct *)
+{
+	pr_info("workqueue_handler called by schedule_work \n");
+
+	return; 
+}
 static irqreturn_t gpio_irq_handler(int irq, void*)
 {
 	pr_info("GPIO IRQ Handler triggered for IRQ: %d\n", irq);
+#ifdef USE_STATIC_WORKQUEUE
+	schedule_work(&static_work);
+#else
+	schedule_work(&dynamic_wq);
+#endif
 	return IRQ_HANDLED;
 
 }
@@ -49,15 +67,20 @@ static int __init gpio_irq_init(void){
 		pr_info("Interrupt request failed for irqNumber:%d GPIO:%d, ret:%d\n",irqNumber, GPIO_NUM, ret);
 	       goto free_gpio;
 	}
-
-
+#ifndef USE_STATIC_WORKQUEUE
+	INIT_WORK(&dynamic_wq, workqueue_handler);
+#endif
 free_gpio:
 	gpio_free(GPIO_NUM);
 
 	return ret;
 };
 static void __exit gpio_irq_exit(void){
-
+#ifdef USE_STATIC_WORKQUEUE
+	cancel_work_sync(&static_work);
+#else
+	flush_work(&dynamic_wq);
+#endif
 	free_irq(irqNumber, NULL);
     	gpio_free(GPIO_NUM);
     	pr_info("GPIO IRQ module unloaded\n");
